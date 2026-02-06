@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "324699346056",
+    "firebase_url": "https://washanddry-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "washanddry",
+    "storage_bucket": "washanddry.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:324699346056:android:9f4338b8ebbc0d92907b3d",
+        "android_client_info": {
+          "package_name": "com.example.wash_and_dry"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "324699346056-di29q77gimd3dkg970f6et1hfl8b101t.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBX6s6gn1yP94kXZIKAKWuAc_r2yeygoMo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "324699346056-di29q77gimd3dkg970f6et1hfl8b101t.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
