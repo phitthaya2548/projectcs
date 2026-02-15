@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:wash_and_dry/config/config.dart';
-import 'package:wash_and_dry/service/session_service.dart'; // ตรวจว่ามี SessionStore จริงไหม
+import 'package:wash_and_dry/service/session_service.dart';
 
 class CustomerService {
   String? _baseUrl;
@@ -18,7 +18,7 @@ class CustomerService {
   }
 
   Future<String> getCustomerId() async {
-    final id = await SessionStore().getCustomerId();
+    final id = await Session().getCustomerId();
     if (id == null || id.isEmpty) {
       throw Exception("ไม่พบ customerId (ยังไม่ได้ล็อกอิน)");
     }
@@ -29,7 +29,7 @@ class CustomerService {
     final baseUrl = await _getBaseUrl();
     final customerId = await getCustomerId();
 
-    final token = await SessionStore().getToken();
+    final token = await Session().getToken();
 
     final uri = Uri.parse('$baseUrl/customer/$customerId/link-google');
     final res = await http.post(
@@ -55,10 +55,8 @@ class CustomerService {
     return "เชื่อม Google สำเร็จ";
   }
   Future<void> logout() async {
-    // 1) ล้าง session ในเครื่อง
-    await SessionStore().clear();
+    await Session().clear();
 
-    // 2) ถ้าใช้ Google Sign-In / FirebaseAuth -> sign out ด้วย
     try {
       await GoogleSignIn().signOut();
     } catch (_) {}

@@ -9,8 +9,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:wash_and_dry/config/config.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:wash_and_dry/screens/customer/pickmap.dart';
-import 'package:wash_and_dry/service/address_screen.dart';
+import 'package:wash_and_dry/screens/pickaddress_frommap.dart';
+import 'package:wash_and_dry/service/address_service.dart';
 import 'package:wash_and_dry/widgets/main_shell_store.dart';
 
 class StoreOnboardingScreen extends StatefulWidget {

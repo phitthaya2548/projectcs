@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:developer';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:get/get_navigation/src/extension_navigation.dart';
-import 'package:get/utils.dart';
+import 'package:get/get.dart';
 import 'package:wash_and_dry/screens/customer/customer_address_screen.dart';
+import 'package:wash_and_dry/screens/customer/profile_edit_customer.dart';
+import 'package:wash_and_dry/screens/customer/wallet_customer_screen.dart';
 import 'package:wash_and_dry/screens/login_screen.dart';
 import 'package:wash_and_dry/service/customer_service.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -19,359 +21,329 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   String _displayName = '';
-  final int _walletBaht = 0;
-  String? _profileImage; 
+  double _walletBalance = 0;
+  String? _profileImage;
   bool linkingGoogle = false;
   String? _customerId;
-@override
-void initState() {
-  super.initState();
-  _loadSession();
-}
-  Future<void> _doLogout(BuildContext context) async {
-    try {
-      await CustomerService().logout();
-
-      if (!context.mounted) return;
-
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (_) => false,
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ออกจากระบบไม่สำเร็จ: $e')),
-      );
-    }
-  }
-Future<void> _loadSession() async {
-  final session = SessionStore();
-  final name = await session.getFullname();
-  final imageUrl = await session.getProfileImage();
-
-  final customerId = await session.getCustomerId();
-  _customerId = customerId;
-  log('Customer ID: $_customerId');
-  if (!mounted) return;
-
-  setState(() {
-    _displayName = (name != null && name.trim().isNotEmpty)
-        ? name.trim()
-        : 'ยังไม่ได้ตั้งชื่อ';
-    
-    _profileImage = (imageUrl != null && imageUrl.trim().isNotEmpty)
-        ? imageUrl.trim()
-        : null;
-    
-    log('Display Name: $_displayName');
-    log('Profile Image: $_profileImage');
-  });
-}
-Future<void> _linkGoogle(BuildContext context) async {
-  if (linkingGoogle) return;
-  setState(() => linkingGoogle = true);
-
-  final g = GoogleSignIn();
-
-  try {
-    // ✅ บังคับให้เลือกบัญชีทุกครั้ง (สำคัญ)
-    // ถ้าอยากให้เลือกเฉพาะตอน error ค่อยย้ายไปไว้ใน catch ก็ได้
-    await g.signOut();
-
-    final googleUser = await g.signIn();
-    if (googleUser == null) return;
-
-    final googleAuth = await googleUser.authentication;
-
-    // ✅ Sign-in เข้า FirebaseAuth ด้วย Google credential
-    final credential = GoogleAuthProvider.credential(
-      idToken: googleAuth.idToken,
-      accessToken: googleAuth.accessToken,
-    );
-
-    await FirebaseAuth.instance.signInWithCredential(credential);
-
-    final firebaseIdToken = await FirebaseAuth.instance.currentUser?.getIdToken(true);
-    if (firebaseIdToken == null || firebaseIdToken.isEmpty) {
-      throw Exception("ไม่พบ Firebase ID Token");
-    }
-
-   final result = await CustomerService().linkGoogle(idToken: firebaseIdToken);
-ScaffoldMessenger.of(context).showSnackBar(
-  SnackBar(content: Text(result.toString())),
-);
-  } catch (e) {
-    // ✅ ถ้าล้มเหลว ให้ล้าง session เพื่อให้กดใหม่แล้วเลือกบัญชีใหม่ได้
-    try {
-      await FirebaseAuth.instance.signOut();
-      await g.disconnect(); // แรงกว่า signOut (ตัดสิทธิ์เดิม)
-    } catch (_) {}
-
-    if (!mounted) return;
-
-    // ✅ ทำปุ่ม “ลองใหม่ / เปลี่ยนบัญชี”
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('เชื่อม Google ไม่สำเร็จ (อีเมลนี้มีบัญชีอยู่แล้ว)'),
-        action: SnackBarAction(
-          label: 'เปลี่ยนบัญชี',
-          onPressed: () => _linkGoogle(context), // กดแล้วเรียกใหม่
-        ),
-      ),
-    );
-  } finally {
-    if (mounted) setState(() => linkingGoogle = false);
-  }
-}
+  String? _phone;
+  
+  StreamSubscription<DocumentSnapshot>? _customerListener; // ✅ เพิ่มนี้
 
   @override
-  Widget build(BuildContext context) {
-    const primary = Color(0xFF0593FF);
+  void initState() {
+    super.initState();
+    _loadSession();
+  }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF3F6FB),
-      body: Column(
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Container(
-                height: 250,
-                width: double.infinity,
-                color: primary,
+  @override
+  void dispose() {
+    _customerListener?.cancel();
+    super.dispose();
+  }
+
+ Future<void> _logout() async {
+  Get.dialog(
+    Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: Colors.white,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                shape: BoxShape.circle,
               ),
-              SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: SizedBox(
-                    height: 46,
-                    child: Row(
-                      children: [
-                        _CircleIconButton(
-                          icon: Icons.menu,
-                          onTap: () {},
-                        ),
-                        const Expanded(
-                          child: Center(
-                            child: Text(
-                              'โปรไฟล์',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w800,
+              child: Icon(
+                Icons.logout_rounded,
+                color: Colors.red.shade400,
+                size: 32,
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'ออกจากระบบ',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'คุณต้องการออกจากระบบใช่หรือไม่?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Color(0xFF757575),
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Get.back(),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      side: const BorderSide(color: Color(0xFFE0E0E0)),
+                    ),
+                    child: const Text(
+                      'ยกเลิก',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF757575),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      Get.back();
+                      
+                      Get.dialog(
+                        const Center(
+                          child: Card(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CircularProgressIndicator(),
+                                  SizedBox(height: 16),
+                                  Text('กำลังออกจากระบบ...'),
+                                ],
                               ),
                             ),
                           ),
                         ),
-                        _CircleIconButton(
-                          icon: Icons.notifications_none_rounded,
-                          onTap: () {},
-                        ),
-                      ],
+                        barrierDismissible: false,
+                      );
+
+                      final session = Session();
+                      await session.clear();
+                      
+                      await Future.delayed(const Duration(milliseconds: 500));
+                      
+                      Get.offAll(() => const LoginScreen());
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'ออกจากระบบ',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Positioned(
-                left: 150,
-                top: 176,
-                right: 16,
-                child: Text(
-                  _displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-             Positioned(
-  left: 20,
-  top: 160,
-  child: Container(
-    width: 112,
-    height: 112,
-    decoration: BoxDecoration(
-      color: Colors.white,
-      shape: BoxShape.circle,
-      boxShadow: [
-        BoxShadow(
-          blurRadius: 18,
-          offset: const Offset(0, 10),
-          color: Colors.black.withOpacity(0.12),
-        ),
-      ],
-    ),
-    child: ClipOval(
-      child: _profileImage != null && _profileImage!.isNotEmpty
-          ? Image.network(
-              _profileImage!,
-              width: 112,
-              height: 112,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Center(
-                  child: Image.asset(
-                    'assets/icons/profile_null.png',
-                    width: 65,
-                    height: 65,
-                    fit: BoxFit.contain,
-                  ),
-                );
-              },
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                // แสดง loading ตอนกำลังโหลดรูป
-                return Center(
-                  child: CircularProgressIndicator(
-                    value: loadingProgress.expectedTotalBytes != null
-                        ? loadingProgress.cumulativeBytesLoaded /
-                            loadingProgress.expectedTotalBytes!
-                        : null,
-                    strokeWidth: 2,
-                  ),
-                );
-              },
-            )
-          : Center(
-              child: Image.asset(
-                'assets/icons/profile_null.png',
-                width: 65,
-                height: 65,
-                fit: BoxFit.contain,
-              ),
+              ],
             ),
+          ],
+        ),
+      ),
     ),
-  ),
-),
-            ],
+    barrierDismissible: true,
+  );
+}
+  Future<void> _loadSession() async {
+    final session = Session();
+    final customerId = await session.getCustomerId();
+    final phone = await session.getPhoneCustomer();
+
+    _phone = phone;
+    _customerId = customerId;
+
+    if (customerId != null) {
+      // ✅ ยกเลิก listener เก่า (ถ้ามี)
+      _customerListener?.cancel();
+      
+      // ✅ ฟังการเปลี่ยนแปลงของ customer แบบ real-time
+      _customerListener = FirebaseFirestore.instance
+          .collection('customers')
+          .doc(customerId)
+          .snapshots()
+          .listen((snapshot) {
+        if (snapshot.exists && mounted) {
+          final data = snapshot.data();
+          setState(() {
+            _walletBalance = (data?['wallet_balance'] ?? 0).toDouble();
+            _displayName = (data?['fullname']?.toString().trim().isNotEmpty ?? false)
+                ? data!['fullname'].toString().trim()
+                : 'ยังไม่ได้ตั้งชื่อ';
+            _profileImage = (data?['profile_image']?.toString().trim().isNotEmpty ?? false)
+                ? data!['profile_image'].toString().trim()
+                : null;
+            _phone = data?['phone']?.toString() ?? phone;
+          });
+          
+          // ✅ อัปเดต Session ด้วย (ให้ตรงกับ Firestore)
+          session.saveLogin(
+            role: 'customer',
+            customerId: customerId,
+            fullname: data?['fullname'] ?? '',
+            profileImage: data?['profile_image'] ?? '',
+            phone: data?['phone'] ?? phone ?? '',
+          );
+        }
+      }, onError: (error) {
+        log('Firestore listener error: $error');
+      });
+    } else {
+      // กรณีไม่มี customerId ให้โหลดจาก session อย่างเดียว
+      final name = await session.getFullname();
+      final imageUrl = await session.getProfileImage();
+      
+      if (!mounted) return;
+      setState(() {
+        _displayName = (name?.trim().isNotEmpty ?? false)
+            ? name!.trim()
+            : 'ยังไม่ได้ตั้งชื่อ';
+        _profileImage = (imageUrl?.trim().isNotEmpty ?? false)
+            ? imageUrl!.trim()
+            : null;
+      });
+    }
+  }
+
+  Future<void> _linkGoogle(BuildContext context) async {
+    if (linkingGoogle) return;
+    setState(() => linkingGoogle = true);
+
+    final g = GoogleSignIn();
+    try {
+      await g.signOut();
+      final gUser = await g.signIn();
+      if (gUser == null) {
+        setState(() => linkingGoogle = false);
+        return;
+      }
+
+      final auth = await gUser.authentication;
+      final cred = GoogleAuthProvider.credential(
+        idToken: auth.idToken,
+        accessToken: auth.accessToken,
+      );
+
+      await FirebaseAuth.instance.signInWithCredential(cred);
+      final token = await FirebaseAuth.instance.currentUser?.getIdToken(true);
+
+      if (token == null || token.isEmpty) throw Exception("ไม่พบ token");
+
+      final result = await CustomerService().linkGoogle(idToken: token);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.toString())),
+      );
+      await _loadSession();
+    } catch (e) {
+      try {
+        await FirebaseAuth.instance.signOut();
+        await g.disconnect();
+      } catch (_) {}
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'เชื่อม Google ไม่สำเร็จ (อีเมลนี้มีบัญชีอยู่แล้ว)',
           ),
+          action: SnackBarAction(
+            label: 'ลองใหม่',
+            onPressed: () => _linkGoogle(context),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => linkingGoogle = false);
+    }
+  }
 
-          const SizedBox(height: 40),
-
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7FA),
+      body: Column(
+        children: [
+          _buildHeader(),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.all(15),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _MenuCard(
-                    title: 'ข้อมูลส่วนตัว',
-                    leading: Image.asset(
-                      'assets/icons/profile1.png',
-                      width: 28,
-                      height: 28,
-                      fit: BoxFit.contain,
-                    ),
-                    onTap: () {},
+                  _buildSectionTitle('บัญชีของฉัน'),
+                  const SizedBox(height: 6),
+                  _buildMenuItem(
+                    'ข้อมูลส่วนตัว',
+                    'แก้ไขข้อมูลส่วนตัว',
+                    'assets/icons/profile1.png',
+                    const Color(0xFF0593FF),
+                    () async {
+                      // ✅ นำทางไปหน้าแก้ไข (Firestore listener จะอัปเดตอัตโนมัติ)
+                      await Get.to(
+                        () => ProfileEditCustomer(customerId: _customerId!),
+                      );
+                    },
                   ),
-                  const SizedBox(height: 12),
-                  _MenuCard(
-                    title: 'กระเป๋าเงิน',
-                    leading: Image.asset(
-                      'assets/icons/wallet1.png',
-                      width: 28,
-                      height: 28,
-                      fit: BoxFit.contain,
-                    ),
-                    trailingText: '$_walletBaht บาท',
-                    onTap: () {},
+                  const SizedBox(height: 10),
+                  _buildMenuItem(
+                    'กระเป๋าเงิน',
+                    'เติมเงินและดูประวัติ',
+                    'assets/icons/wallet1.png',
+                    const Color(0xFF0593FF),
+                    trailing: '${_walletBalance.toStringAsFixed(2)} ฿',
+                    trailingColor: Colors.green[700],
+                    () {
+                      if (_customerId != null) {}
+                    },
                   ),
-                  const SizedBox(height: 12),
-                  _MenuCard(
-                    title: 'ที่อยู่',
-                    leading: Image.asset(
-                      'assets/icons/map.png',
-                      width: 28,
-                      height: 28,
-                      fit: BoxFit.contain,
-                    ),
-                    onTap: () {
-  if (_customerId == null) return;
-
-  Get.to(() => CustomerAddressScreen(
-        customerId: _customerId!,
-      ));
-},
+                  const SizedBox(height: 10),
+                  _buildMenuItem(
+                    'ที่อยู่',
+                    'จัดการที่อยู่ของคุณ',
+                    'assets/icons/map.png',
+                    const Color(0xFF0593FF),
+                    () {
+                      if (_customerId != null) {
+                        Get.to(
+                          () => CustomerAddressScreen(customerId: _customerId!),
+                        );
+                      }
+                    },
                   ),
-                  const SizedBox(height: 12),
-
-                  _MenuCard(
-  title: linkingGoogle
-      ? 'กำลังเชื่อม Google...'
-      : (_profileImage == null
-          ? 'เชื่อมบัญชี Google'
-          : 'บัญชี Google เชื่อมแล้ว'),
-  leading: linkingGoogle
-      ? const SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        )
-      : (_profileImage == null
-          ? const Icon(Icons.g_mobiledata_rounded, color: primary, size: 28)
-          : CircleAvatar(
-  radius: 20,
-  backgroundImage:
-      _profileImage != null ? NetworkImage(_profileImage!) : null,
-  child: _profileImage == null
-      ? const Icon(Icons.person, color: Colors.white)
-      : null,
-)),
-  onTap: linkingGoogle || _profileImage != null
-      ? null
-      : () => _linkGoogle(context),
-  trailingText: _profileImage != null ? 'เชื่อมแล้ว' : null,
-  trailingTextColor: Colors.green,
-),
-
-
-                  const SizedBox(height: 14),
-
-                  InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    onTap: () => _doLogout(context),
-                    child: Container(
-                      height: 64,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF3B3B),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            blurRadius: 16,
-                            offset: const Offset(0, 10),
-                            color: Colors.black.withOpacity(0.12),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 16),
-                          Image.asset(
-                            'assets/icons/logout.png',
-                            width: 28,
-                            height: 28,
-                            fit: BoxFit.contain,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'ออกจากระบบ',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: 18),
+                  _buildSectionTitle('การเชื่อมต่อ'),
+                  const SizedBox(height: 6),
+                  _buildGoogleCard(),
+                  const SizedBox(height: 18),
+                  _buildLogoutButton(),
+                  const SizedBox(height: 16),
                 ],
               ),
             ),
@@ -380,115 +352,399 @@ ScaffoldMessenger.of(context).showSnackBar(
       ),
     );
   }
-}
 
-class _MenuCard extends StatelessWidget {
-  const _MenuCard({
-    required this.title,
-    this.onTap,
-    this.trailingText,
-    this.trailingTextColor,
-    this.leading,
-  });
+  Widget _buildHeader() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
+        ),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(28),
+          bottomRight: Radius.circular(28),
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+              child: Row(
+                children: [
+                  _buildCircleBtn(Icons.menu, () {}),
+                  const Expanded(
+                    child: Center(
+                      child: Text(
+                        'โปรไฟล์',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  _buildCircleBtn(Icons.notifications_none_rounded, () {}),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+              child: _buildProfileCard(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-  final String title;
-  final VoidCallback? onTap;
-  final String? trailingText;
-  final Color? trailingTextColor;
-  final Widget? leading;
+  Widget _buildProfileCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: ClipOval(
+              child: _profileImage != null && _profileImage!.isNotEmpty
+                  ? Image.network(
+                      _profileImage!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Image.asset(
+                        'assets/icons/profile_null.png',
+                        width: 38,
+                        height: 38,
+                      ),
+                    )
+                  : Image.asset(
+                      'assets/icons/profile_null.png',
+                      width: 38,
+                      height: 38,
+                    ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.22),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.phone_android_outlined,
+                        color: Colors.white,
+                        size: 15,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        '$_phone',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.22),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.edit_rounded,
+              color: Colors.white,
+              size: 19,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    const primary = Color(0xFF0593FF);
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, top: 6, bottom: 8),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF1A1A1A),
+        ),
+      ),
+    );
+  }
 
+  Widget _buildMenuItem(
+    String title,
+    String subtitle,
+    String iconPath,
+    Color color,
+    VoidCallback? onTap, {
+    String? trailing,
+    Color? trailingColor,
+  }) {
     return InkWell(
-      borderRadius: BorderRadius.circular(16),
       onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              blurRadius: 14,
-              offset: const Offset(0, 8),
-              color: Colors.black.withOpacity(0.08),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+              color: Colors.black.withOpacity(0.05),
             ),
           ],
         ),
         child: Row(
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
-                color: primary.withOpacity(0.10),
-                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [color.withOpacity(0.18), color.withOpacity(0.08)],
+                ),
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: leading is CircleAvatar
-                  ? ClipOval(
-                      child: SizedBox(
-                        width: 44,
-                        height: 44,
-                        child: leading,
-                      ),
-                    )
-                  : Center(
-                      child: leading ??
-                          const Icon(Icons.circle_outlined, color: primary),
-                    ),
+              child: Center(
+                child: Image.asset(iconPath, width: 22, height: 22),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  color: primary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1A1A1A),
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ],
               ),
             ),
-            if (trailingText != null) ...[
+            if (trailing != null) ...[
               Text(
-                trailingText!,
+                trailing,
                 style: TextStyle(
-                  color: trailingTextColor ?? Colors.black87,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: trailingColor ?? const Color(0xFF1A1A1A),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 6),
             ],
-            const Icon(Icons.chevron_right_rounded, color: Colors.black38),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: Colors.grey[400],
+              size: 22,
+            ),
           ],
         ),
       ),
     );
   }
-}
 
-class _CircleIconButton extends StatelessWidget {
-  const _CircleIconButton({required this.icon, required this.onTap});
+  Widget _buildGoogleCard() {
+    final user = FirebaseAuth.instance.currentUser;
+    final isLinked =
+        user?.providerData.any((p) => p.providerId == 'google.com') ?? false;
 
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
     return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
+      onTap: linkingGoogle || isLinked ? null : () => _linkGoogle(context),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        width: 42,
-        height: 42,
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.20),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.25)),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+              color: Colors.black.withOpacity(0.05),
+            ),
+          ],
         ),
-        child: Icon(icon, color: Colors.white),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F6F6),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: linkingGoogle
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : isLinked
+                        ? const Icon(
+                            Icons.check_circle_rounded,
+                            color: Colors.green,
+                            size: 26,
+                          )
+                        : Image.asset(
+                            'assets/icons/google.png',
+                            width: 26,
+                            height: 26,
+                          ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    linkingGoogle
+                        ? 'กำลังเชื่อม...'
+                        : (isLinked
+                            ? 'บัญชี Google เชื่อมแล้ว'
+                            : 'เชื่อมบัญชี Google'),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1A1A1A),
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    isLinked ? 'บัญชีของคุณปลอดภัย' : 'เชื่อมเพื่อความปลอดภัย',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ),
+            if (isLinked) ...[
+              Text(
+                'เชื่อมแล้ว',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.green[700],
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Icon(
+              Icons.chevron_right_rounded,
+              color: Colors.grey[400],
+              size: 22,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogoutButton() {
+    return InkWell(
+      onTap: () => _logout(),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFF3B3B), Color(0xFFE31C1C)],
+          ),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Image.asset(
+              'assets/icons/logout.png',
+              width: 22,
+              height: 22,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 10),
+            const Text(
+              'ออกจากระบบ',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCircleBtn(IconData icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.22),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withOpacity(0.35)),
+        ),
+        child: Icon(icon, color: Colors.white, size: 22),
       ),
     );
   }

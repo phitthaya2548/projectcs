@@ -18,7 +18,7 @@ class _MainShellState extends State<MainShellCustomer> {
   final _pages = const [
     HomeScreen(),
     OrdersScreen(),
-    WalletScreen(),
+    WalletCustomerScreen(),
     ProfileScreen(),
   ];
 

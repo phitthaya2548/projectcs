@@ -5,6 +5,7 @@ import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/screens/login_screen.dart';
 
 import 'package:wash_and_dry/widgets/main_shell_customer.dart';
+import 'package:wash_and_dry/widgets/main_shell_store.dart';
 
 class SplashGate extends StatefulWidget {
   const SplashGate({super.key});
@@ -21,12 +22,11 @@ class _SplashGateState extends State<SplashGate> {
   }
 
   Future<void> _boot() async {
-    final ss = SessionStore();
+    final ss = Session();
 
     final role = await ss.getRole();
     final customerId = await ss.getCustomerId();
     final storeId = await ss.getStoreId();
-    final token = await ss.getToken();
 
     
     final loggedInCustomer =
@@ -37,18 +37,15 @@ class _SplashGateState extends State<SplashGate> {
 
     if (!mounted) return;
 
-    if (loggedInStore) {
-
-      return;
-    }
 
     if (loggedInCustomer) {
       Get.offAll(() => MainShellCustomer());
       return;
     }
-
-    // ถ้าอยากบังคับ token ด้วยก็เพิ่มเงื่อนไข token ได้
-    // (แต่ถ้า backend ยังไม่ใช้ token ก็ไม่ต้อง)
+     if (loggedInStore) {
+      Get.offAll(() => MainShellStore());
+      return;
+    }
 
     Get.offAll(() => const LoginScreen());
   }
